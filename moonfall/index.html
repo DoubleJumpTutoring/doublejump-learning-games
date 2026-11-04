@@ -4316,7 +4316,7 @@ html.moonfall-mobile-lite #game .controlstrip .clear-text-btn{display:none!impor
  <div class="dev-controls dev-damage-controls"><span class="dev-label">Base damage</span><button type="button" id="devDamage" title="Apply one stage of damage to the actual lunar base">🔥 Add damage</button><button type="button" id="devHeal" title="Repair one damage stage">🩹 Heal damage</button><span id="devDamageStatus" class="dev-damage-status" aria-live="polite">Damage: 0 / 12</span></div>
  <div class="dev-controls"><span class="dev-label">Automatic meteors</span><label><input type="checkbox" id="devBeginner"> 🎯 Easy</label><label><input type="checkbox" id="devIntermediate"> ⚡ Medium</label><label><input type="checkbox" id="devAdvanced"> ☄️ Hard</label></div>
  <div class="dev-status" id="devStatus" role="status">Automatic spawning is off. Use the buttons to inspect any object.</div>
-</div></section><div class="notice">MOONFALL • Version 1.0 • Made for curious minds by DoubleJump</div></div></div>
+</div></section><div class="notice">MOONFALL • Version 1.0.1 • Made for curious minds by DoubleJump</div></div></div>
 <script>
 // Uniformly fit a fixed-size arcade canvas into the visible browser viewport.
 (function(){
@@ -5112,14 +5112,35 @@ function flash(w,earned,cm,sm){
 // The same SVG point (500, 44) used by the intro emitter is the top of the
 // gameplay dome. Convert SVG screen coordinates back into the game's unscaled
 // coordinate system so uniform canvas scaling and mobile SVG cropping both work.
+// The moon-base SVG has a fixed 1000 x 210 viewBox. Derive its displayed
+// geometry from its visible rectangle, not getScreenCTM(): iOS Safari can
+// report a different matrix while the keyboard and scaled stage are resizing.
+// "xMidYMax meet" means the artwork is horizontally centered and bottom-aligned.
 const extraCannonTips=[{id:'satelliteOrbLeft',x:271,y:65},{id:'satelliteOrbRight',x:802,y:64}];
-function alignSatelliteOrbs(svg,rect,ratioX,ratioY){
+function gameplayBaseGeometry(){
+ const svg=arena.querySelector(':scope > svg.moon-fortress');
+ if(!svg)return null;
+ const bounds=svg.getBoundingClientRect(),arenaBounds=arena.getBoundingClientRect();
+ if(bounds.width<1||bounds.height<1||!arena.offsetWidth||!arena.offsetHeight)return null;
+ const ratioX=arenaBounds.width/arena.offsetWidth;
+ const ratioY=arenaBounds.height/arena.offsetHeight;
+ if(!ratioX||!ratioY)return null;
+ const unit=Math.min(bounds.width/1000,bounds.height/210);
+ const left=bounds.left+(bounds.width-1000*unit)/2;
+ const bottom=bounds.bottom; // preserveAspectRatio="xMidYMax meet"
+ const local=(x,y)=>({
+   x:(left+x*unit-arenaBounds.left)/ratioX-arena.clientLeft,
+   y:(bottom-(210-y)*unit-arenaBounds.top)/ratioY-arena.clientTop
+ });
+ return {local};
+}
+function alignSatelliteOrbs(geometry){
  for(const tip of extraCannonTips){
-   const holder=$(tip.id);if(!holder)return;
-   const point=svg.createSVGPoint();point.x=tip.x;point.y=tip.y;
-   const screen=point.matrixTransform(svg.getScreenCTM());
-   holder.style.left=((screen.x-rect.left)/ratioX-arena.clientLeft)+'px';
-   holder.style.top=((screen.y-rect.top)/ratioY-arena.clientTop)+'px';
+   const holder=$(tip.id);
+   if(!holder)continue;
+   const pos=geometry.local(tip.x,tip.y);
+   holder.style.left=pos.x+'px';
+   holder.style.top=pos.y+'px';
  }
 }
 function syncSatelliteOrbs(overdrive){
@@ -5139,23 +5160,33 @@ function syncSatelliteOrbs(overdrive){
  if(enabled)alignGameplayCannon();
 }
 function alignGameplayCannon(){
- const svg=arena.querySelector(':scope > svg.moon-fortress');
  const cannon=arena.querySelector(':scope > .beam-origin');
- if(!svg||!cannon||!svg.getScreenCTM()||svg.getBoundingClientRect().width<1)return;
- const crown=svg.createSVGPoint();crown.x=500;crown.y=44;
- const screen=crown.matrixTransform(svg.getScreenCTM());
- const rect=arena.getBoundingClientRect();
- const ratioX=rect.width/arena.offsetWidth,ratioY=rect.height/arena.offsetHeight;
- const x=(screen.x-rect.left)/ratioX-arena.clientLeft;
- const y=(screen.y-rect.top)/ratioY-arena.clientTop;
+ const geometry=gameplayBaseGeometry();
+ if(!cannon||!geometry)return;
+ // The main dome is centered in the 1000-unit SVG. Its center therefore
+ // equals the center of the arena, even when the 650px mobile artwork is cropped.
+ // Avoid an SVG-derived horizontal offset on Safari entirely.
+ const center=geometry.local(500,44);
+ const x=arena.clientWidth/2;
+ const y=center.y;
  arena.style.setProperty('--cannon-left',x+'px');
  arena.style.setProperty('--cannon-top',(y-cannon.offsetHeight/2)+'px');
- alignSatelliteOrbs(svg,rect,ratioX,ratioY);
+ alignSatelliteOrbs(geometry);
 }
-window.addEventListener('resize',()=>requestAnimationFrame(alignGameplayCannon),{passive:true});
-window.visualViewport?.addEventListener('resize',()=>requestAnimationFrame(alignGameplayCannon),{passive:true});
-window.matchMedia('(max-width:640px)').addEventListener?.('change',()=>requestAnimationFrame(alignGameplayCannon));
-requestAnimationFrame(alignGameplayCannon);
+// Schedule after stage scaling and Safari keyboard animation have settled.
+let cannonAlignmentFrame=0;
+function scheduleCannonAlignment(){
+ cancelAnimationFrame(cannonAlignmentFrame);
+ cannonAlignmentFrame=requestAnimationFrame(()=>requestAnimationFrame(alignGameplayCannon));
+}
+window.addEventListener('resize',scheduleCannonAlignment,{passive:true});
+window.visualViewport?.addEventListener('resize',scheduleCannonAlignment,{passive:true});
+window.visualViewport?.addEventListener('scroll',scheduleCannonAlignment,{passive:true});
+window.addEventListener('moonfall-layout-change',scheduleCannonAlignment);
+typing.addEventListener('focus',scheduleCannonAlignment);
+typing.addEventListener('blur',scheduleCannonAlignment);
+window.matchMedia('(max-width:640px)').addEventListener?.('change',scheduleCannonAlignment);
+scheduleCannonAlignment();
 function heatRayShatter(w){
  alignGameplayCannon();
  const cannon=arena.querySelector('.beam-origin');if(!cannon||!w?.el)return;
